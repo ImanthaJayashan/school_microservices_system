@@ -43,7 +43,7 @@ Each microservice is independent, has its own process and port, and exposes REST
 ```text
 Client / Browser / Postman
 					|
-					|  Single Port Entry (8080)
+					|  Single Port Entry (8000)
 					v
 		 +-------------------+
 		 |    API Gateway    |
@@ -61,7 +61,7 @@ Without a gateway, client applications must call multiple ports directly (`8001`
 
 With the gateway:
 
-- Clients call a **single port** (`8080`)
+- Clients call a **single port** (`8000`)
 - Routing is centralized by service name
 - URL format is standardized
 - Easier to secure, monitor, and scale later
@@ -120,15 +120,15 @@ micro/
 
 ### API Gateway access (single port)
 
-Gateway docs: http://127.0.0.1:8080/docs
+Gateway docs: http://127.0.0.1:8000/docs
 
 Service Swagger via gateway:
 
-1. Student: http://127.0.0.1:8080/api/students/docs
-2. Teachers: http://127.0.0.1:8080/api/teachers/docs
-3. Sports: http://127.0.0.1:8080/api/sports/docs
-4. Exams: http://127.0.0.1:8080/api/exams/docs
-5. Subjects: http://127.0.0.1:8080/api/subjects/docs
+1. Student: http://127.0.0.1:8000/api/students/docs
+2. Teachers: http://127.0.0.1:8000/api/teachers/docs
+3. Sports: http://127.0.0.1:8000/api/sports/docs
+4. Exams: http://127.0.0.1:8000/api/exams/docs
+5. Subjects: http://127.0.0.1:8000/api/subjects/docs
 
 ## 8. CRUD Endpoints by Service
 
@@ -214,33 +214,27 @@ This opens separate PowerShell windows for all services and gateway.
 ### Option B: Start manually in separate terminals
 
 ```powershell
-cd services/student-service/src
-uvicorn app:app --port 8001 --reload
+python -m uvicorn app:app --port 8001 --reload --app-dir services/student-service/src
 ```
 
 ```powershell
-cd services/teachers-service/src
-uvicorn app:app --port 8002 --reload
+python -m uvicorn app:app --port 8002 --reload --app-dir services/teachers-service/src
 ```
 
 ```powershell
-cd services/sports-service/src
-uvicorn app:app --port 8003 --reload
+python -m uvicorn app:app --port 8003 --reload --app-dir services/sports-service/src
 ```
 
 ```powershell
-cd services/exams-service/src
-uvicorn app:app --port 8004 --reload
+python -m uvicorn app:app --port 8004 --reload --app-dir services/exams-service/src
 ```
 
 ```powershell
-cd services/subjects-service/src
-uvicorn app:app --port 8005 --reload
+python -m uvicorn app:app --port 8005 --reload --app-dir services/subjects-service/src
 ```
 
 ```powershell
-cd gateway/src
-uvicorn app:app --port 8080 --reload
+python -m uvicorn gateway.src.app:app --port 8000 --reload
 ```
 
 ## 11. Using APIs Through the Gateway
@@ -248,7 +242,7 @@ uvicorn app:app --port 8080 --reload
 Base URL:
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1:8000
 ```
 
 Examples:
@@ -318,16 +312,16 @@ Use these PowerShell commands from project root:
 
 ```powershell
 # Create student
-Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/students/students" -Method Post -ContentType "application/json" -Body '{"name":"Test Student","age":15,"grade":"Grade 10"}'
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/students/students" -Method Post -ContentType "application/json" -Body '{"name":"Test Student","age":15,"grade":"Grade 10"}'
 
 # List students
-Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/students/students" -Method Get
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/students/students" -Method Get
 
 # Create teacher
-Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/teachers/teachers" -Method Post -ContentType "application/json" -Body '{"name":"Test Teacher","subject":"English","years_experience":5}'
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/teachers/teachers" -Method Post -ContentType "application/json" -Body '{"name":"Test Teacher","subject":"English","years_experience":5}'
 
 # List teachers
-Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/teachers/teachers" -Method Get
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/teachers/teachers" -Method Get
 ```
 
 ## 14. Troubleshooting
@@ -376,7 +370,7 @@ Capture screenshots for:
 
 1. Folder structure showing gateway + microservices
 2. Each direct Swagger page (`8001` to `8005`)
-3. Each gateway Swagger page (`8080/api/<service>/docs`)
+3. Each gateway Swagger page (`8000/api/<service>/docs`)
 4. One successful CRUD flow for each service
 5. Comparison: direct call vs gateway call for same endpoint
 6. Team member names and individual contributions

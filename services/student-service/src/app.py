@@ -6,6 +6,8 @@ app = FastAPI(
     title="Student Service",
     version="1.0.0",
     description="CRUD API for students",
+    docs_url="/docs",       # Enable docs
+    redoc_url="/redoc",     # ReDoc option
 )
 
 
