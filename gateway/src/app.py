@@ -8,6 +8,8 @@ app = FastAPI(
     title="School API Gateway",
     version="1.0.0",
     description="Single-entry API gateway for school microservices",
+    docs_url=None,
+    redoc_url=None,
 )
 
 
@@ -26,6 +28,114 @@ SERVICE_RESOURCES: dict[str, str] = {
     "exams": "exams",
     "subjects": "subjects",
 }
+
+SERVICE_ALIASES: dict[str, str] = {
+    "student": "students",
+    "teacher": "teachers",
+    "sport": "sports",
+    "exam": "exams",
+    "subject": "subjects",
+}
+
+
+def _normalize_service_name(service_name: str) -> str:
+    return SERVICE_ALIASES.get(service_name, service_name)
+
+
+def _resolve_target_path(service_name: str, path: str) -> str:
+    resource = SERVICE_RESOURCES[service_name]
+    clean_path = path.lstrip("/")
+
+    # Do not rewrite service metadata/documentation paths.
+    if clean_path in {"openapi.json", "docs", "redoc"}:
+        return clean_path
+
+    if clean_path == "":
+        return resource
+    if clean_path == resource or clean_path.startswith(f"{resource}/"):
+        return clean_path
+    return f"{resource}/{clean_path}"
+
+
+def _swagger_html(openapi_url: str, title: str, selected_service: str | None = None) -> HTMLResponse:
+    response = get_swagger_ui_html(
+        openapi_url=openapi_url,
+        title=title,
+        swagger_ui_parameters={
+            "docExpansion": "list",
+            "defaultModelsExpandDepth": -1,
+            "displayRequestDuration": True,
+            "tryItOutEnabled": True,
+            "filter": True,
+            "persistAuthorization": True,
+        },
+    )
+
+    service_links = "".join(
+        (
+            f'<a class="quick-link {'active' if selected_service == service else ''}" '
+            f'href="/api/{service}/docs">{service.capitalize()}</a>'
+        )
+        for service in SERVICE_BASE_URLS
+    )
+
+    helper_bar = f"""
+    <div class="quick-nav">
+        <a class="quick-link" href="/">Gateway Home</a>
+        <a class="quick-link {'active' if selected_service is None else ''}" href="/docs">Gateway Docs</a>
+        {service_links}
+    </div>
+    <style>
+        .quick-nav {{
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            padding: 10px 16px;
+            background: #0f2a2f;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            border-bottom: 1px solid #1f4750;
+        }}
+
+        .quick-link {{
+            text-decoration: none;
+            color: #e8f6f8;
+            background: #1c5661;
+            border: 1px solid #2a6c78;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 0.9rem;
+            line-height: 1;
+        }}
+
+        .quick-link:hover {{
+            background: #28727f;
+        }}
+
+        .quick-link.active {{
+            background: #0e8f83;
+            border-color: #12a395;
+            font-weight: 600;
+        }}
+
+        .swagger-ui .topbar {{
+            display: none;
+        }}
+    </style>
+    """
+
+    html = response.body.decode("utf-8").replace("<body>", f"<body>{helper_bar}")
+    return HTMLResponse(content=html, status_code=response.status_code)
+
+
+@app.get("/docs", include_in_schema=False)
+def gateway_docs() -> HTMLResponse:
+    return _swagger_html(
+        openapi_url="/openapi.json",
+        title="School API Gateway Docs",
+        selected_service=None,
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -178,13 +288,48 @@ def root() -> str:
             font-size: 0.93rem;
             line-height: 1.45;
         }}
+
+        .data-panel {{
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: #f8fbfc;
+            padding: 14px;
+            display: grid;
+            gap: 10px;
+        }}
+
+        .data-head {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+
+        .status {{
+            font-size: 0.9rem;
+            color: var(--muted);
+            margin: 0;
+        }}
+
+        pre {{
+            margin: 0;
+            max-height: 280px;
+            overflow: auto;
+            background: #0f2a2f;
+            color: #e7f8fb;
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 0.84rem;
+            line-height: 1.5;
+        }}
     </style>
 </head>
 <body>
     <main class="card">
         <section class="header">
             <h1>School API Gateway</h1>
-            <p>Select a service to quickly open its Swagger docs or copy CRUD route templates through the gateway on port 8080.</p>
+              <p>Select a service to quickly open its Swagger docs or copy CRUD route templates through the gateway on port 8000.</p>
         </section>
 
         <section class="content">
@@ -208,8 +353,17 @@ def root() -> str:
             </div>
 
             <p class="note">
-                Route format: /api/&lt;service&gt;/&lt;resource&gt; and /api/&lt;service&gt;/&lt;resource&gt;/&lt;id&gt;
+                Route format: /api/&lt;service&gt; and /api/&lt;service&gt;/&lt;id&gt; (legacy /api/&lt;service&gt;/&lt;resource&gt; still works)
             </p>
+
+            <section class="data-panel">
+                <div class="data-head">
+                    <strong>Live Data (GET List)</strong>
+                    <button class="btn" id="fetchBtn" type="button">Fetch Data</button>
+                </div>
+                <p class="status" id="fetchStatus">Select a service and click Fetch Data.</p>
+                <pre id="dataPreview">[]</pre>
+            </section>
         </section>
     </main>
 
@@ -220,22 +374,59 @@ def root() -> str:
         const crudBaseUrl = document.getElementById('crudBaseUrl');
         const crudByIdUrl = document.getElementById('crudByIdUrl');
         const openDocsBtn = document.getElementById('openDocsBtn');
+        const fetchBtn = document.getElementById('fetchBtn');
+        const fetchStatus = document.getElementById('fetchStatus');
+        const dataPreview = document.getElementById('dataPreview');
+
+        async function fetchServiceData() {{
+            const service = serviceSelect.value;
+            const endpoint = `/api/${{service}}`;
+
+            fetchBtn.disabled = true;
+            fetchStatus.textContent = `Loading data from ${{endpoint}} ...`;
+
+            try {{
+                const response = await fetch(endpoint, {{
+                    method: 'GET',
+                    headers: {{ 'Accept': 'application/json' }}
+                }});
+
+                const payload = await response.json();
+
+                if (!response.ok) {{
+                    fetchStatus.textContent = `Failed (${{response.status}}) from ${{endpoint}}`;
+                    dataPreview.textContent = JSON.stringify(payload, null, 2);
+                    return;
+                }}
+
+                const count = Array.isArray(payload) ? payload.length : 1;
+                fetchStatus.textContent = `Loaded ${{count}} record(s) from ${{endpoint}}`;
+                dataPreview.textContent = JSON.stringify(payload, null, 2);
+            }} catch (error) {{
+                fetchStatus.textContent = `Request error: ${{error.message}}`;
+                dataPreview.textContent = '[]';
+            }} finally {{
+                fetchBtn.disabled = false;
+            }}
+        }}
 
         function updateView() {{
             const service = serviceSelect.value;
-            const resource = serviceToResource[service];
 
             const docsPath = `/api/${{service}}/docs`;
-            const crudBasePath = `/api/${{service}}/${{resource}}`;
+            const crudBasePath = `/api/${{service}}`;
             const crudByIdPath = `${{crudBasePath}}/1`;
 
             docsUrl.textContent = `${{window.location.origin}}${{docsPath}}`;
             crudBaseUrl.textContent = `${{window.location.origin}}${{crudBasePath}}`;
             crudByIdUrl.textContent = `${{window.location.origin}}${{crudByIdPath}}`;
             openDocsBtn.href = docsPath;
+            fetchStatus.textContent = 'Select a service and click Fetch Data.';
+            dataPreview.textContent = '[]';
         }}
 
         serviceSelect.addEventListener('change', updateView);
+        fetchBtn.addEventListener('click', fetchServiceData);
         updateView();
     </script>
 </body>
@@ -248,15 +439,54 @@ def list_services() -> dict[str, str]:
     return SERVICE_BASE_URLS
 
 
-@app.get("/api/{service_name}/docs")
-def service_docs(service_name: str) -> Response:
+@app.get("/api/{service_name}/docs", include_in_schema=False)
+def service_docs(service_name: str) -> HTMLResponse:
+    service_name = _normalize_service_name(service_name)
     if service_name not in SERVICE_BASE_URLS:
         raise HTTPException(status_code=404, detail="Unknown service")
 
-    return get_swagger_ui_html(
+    return _swagger_html(
         openapi_url=f"/api/{service_name}/openapi.json",
         title=f"{service_name.capitalize()} Service Docs via Gateway",
+        selected_service=service_name,
     )
+
+
+@app.get("/api/{service_name}/openapi.json", include_in_schema=False)
+async def service_openapi(service_name: str, request: Request) -> Response:
+    service_name = _normalize_service_name(service_name)
+    base_url = SERVICE_BASE_URLS.get(service_name)
+    if not base_url:
+        raise HTTPException(status_code=404, detail="Unknown service")
+
+    target_url = f"{base_url}/openapi.json"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            upstream_response = await client.get(target_url)
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{service_name} service is unavailable. Ensure it is running on {base_url}.",
+        ) from exc
+
+    response_headers = {}
+    upstream_content_type = upstream_response.headers.get("content-type")
+    if upstream_content_type:
+        response_headers["content-type"] = upstream_content_type
+
+    return Response(
+        content=upstream_response.content,
+        status_code=upstream_response.status_code,
+        headers=response_headers,
+    )
+
+
+@app.api_route(
+    "/api/{service_name}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+async def proxy_root(service_name: str, request: Request) -> Response:
+    return await proxy(service_name=service_name, path="", request=request)
 
 
 @app.api_route(
@@ -264,26 +494,48 @@ def service_docs(service_name: str) -> Response:
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 )
 async def proxy(service_name: str, path: str, request: Request) -> Response:
+    service_name = _normalize_service_name(service_name)
     base_url = SERVICE_BASE_URLS.get(service_name)
     if not base_url:
         raise HTTPException(status_code=404, detail="Unknown service")
 
-    target_url = f"{base_url}/{path}"
+    target_path = _resolve_target_path(service_name, path)
+    target_url = f"{base_url}/{target_path}"
 
     body = await request.body()
-    content_type = request.headers.get("content-type")
-    headers: dict[str, str] = {}
-    if content_type:
-        headers["content-type"] = content_type
+    
+    # Prepare headers, excluding host to avoid conflicts
+    headers = {}
+    for header_name, header_value in request.headers.items():
+        # Skip hop-by-hop headers
+        if header_name.lower() not in ["host", "connection", "transfer-encoding", "content-length"]:
+            headers[header_name] = header_value
+    
+    # Ensure content-type is present for POST/PUT/PATCH
+    if request.method in ["POST", "PUT", "PATCH"] and "content-type" not in headers:
+        headers["content-type"] = "application/json"
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        upstream_response = await client.request(
-            method=request.method,
-            url=target_url,
-            params=request.query_params,
-            content=body,
-            headers=headers,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Build request kwargs
+            request_kwargs = {
+                "method": request.method,
+                "url": target_url,
+                "headers": headers,
+            }
+            
+            # Only add params and content if they exist
+            if request.query_params:
+                request_kwargs["params"] = request.query_params
+            if body:
+                request_kwargs["content"] = body
+            
+            upstream_response = await client.request(**request_kwargs)
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{service_name} service is unavailable. Ensure it is running on {base_url}.",
+        ) from exc
 
     response_headers = {}
     upstream_content_type = upstream_response.headers.get("content-type")
