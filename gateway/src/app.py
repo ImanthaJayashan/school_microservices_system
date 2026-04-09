@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html
 import httpx
+import json
 
 
 app = FastAPI(
@@ -474,9 +475,28 @@ async def service_openapi(service_name: str, request: Request) -> Response:
     if upstream_content_type:
         response_headers["content-type"] = upstream_content_type
 
+    if upstream_response.status_code != 200:
+        return Response(
+            content=upstream_response.content,
+            status_code=upstream_response.status_code,
+            headers=response_headers,
+        )
+
+    # Ensure Swagger "Try it out" uses gateway-prefixed routes.
+    try:
+        openapi_doc = upstream_response.json()
+    except ValueError:
+        return Response(
+            content=upstream_response.content,
+            status_code=upstream_response.status_code,
+            headers=response_headers,
+        )
+
+    openapi_doc["servers"] = [{"url": f"/api/{service_name}"}]
+
     return Response(
-        content=upstream_response.content,
-        status_code=upstream_response.status_code,
+        content=json.dumps(openapi_doc),
+        status_code=200,
         headers=response_headers,
     )
 
